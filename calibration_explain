@@ -1,0 +1,178 @@
+Camera calibration is an essential step to correct distortions caused by the camera lens. In the context of drone or VTOL projects, calibration helps in improving the accuracy of marker detection, especially for pose estimation when working with ArUco markers or any other visual reference. Below is a detailed guide on how to perform camera calibration using OpenCV.
+
+### **Why Camera Calibration is Important**
+
+A camera, especially a wide-angle or fisheye lens, introduces distortions into the image. Calibration allows you to:
+- Correct lens distortion (barrel or pincushion distortion).
+- Estimate intrinsic camera parameters (focal length, optical center, etc.).
+- Provide accurate 3D pose estimations, which are crucial for tasks like autonomous landing.
+
+### **Steps for Camera Calibration**
+
+#### **1. Preparing for Calibration**
+
+You will need:
+- A **checkerboard pattern** printed on paper. You can download one from [here](https://calib.io/pages/camera-calibration-pattern-generator). Print a checkerboard with squares of known size, such as 9x6 or 7x9 squares.
+- A **camera** (Raspberry Pi camera module, USB camera, etc.).
+- **OpenCV** installed on your system.
+
+#### **2. Capture Calibration Images**
+
+1. **Position the Checkerboard**:
+   - Place the checkerboard at different angles and positions within the camera's view. You want a variety of poses for better calibration results.
+   - Ensure the entire checkerboard is visible in each image, and the pattern should not be distorted too much.
+
+2. **Capture Images**:
+   - You can capture multiple images (usually around 15-20 images from different angles) of the checkerboard.
+   - The more angles and positions you capture, the better the calibration accuracy.
+   - Save the images in a folder for processing.
+
+#### **3. Calibration Using OpenCV**
+
+Here’s the Python code to perform the camera calibration using OpenCV:
+
+```python
+import numpy as np
+import cv2
+import glob
+
+# Define the size of the checkerboard (number of inner corners per chessboard row and column)
+CHECKERBOARD = (9, 6)
+
+# Termination criteria for corner sub-pixel refinement
+criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
+
+# Prepare object points (3D points in real world space)
+# Like (0,0,0), (1,0,0), (2,0,0), ..., (8,5,0)
+objp = np.zeros((CHECKERBOARD[0] * CHECKERBOARD[1], 3), np.float32)
+objp[:, :2] = np.mgrid[0:CHECKERBOARD[0], 0:CHECKERBOARD[1]].T.reshape(-1, 2)
+
+# Arrays to store object points and image points from all images
+objpoints = []  # 3D points in real world space
+imgpoints = []  # 2D points in image plane
+
+# Load images
+images = glob.glob('calibration_images/*.jpg')  # Path to your calibration images
+
+for fname in images:
+    img = cv2.imread(fname)
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+    # Find the chessboard corners
+    ret, corners = cv2.findChessboardCorners(gray, CHECKERBOARD, None)
+
+    # If found, refine corners and add them to the list
+    if ret:
+        objpoints.append(objp)
+
+        # Refine the corner locations to sub-pixel accuracy
+        corners2 = cv2.cornerSubPix(gray, corners, (11, 11), (-1, -1), criteria)
+        imgpoints.append(corners2)
+
+        # Draw and display the corners
+        img = cv2.drawChessboardCorners(img, CHECKERBOARD, corners2, ret)
+        cv2.imshow('img', img)
+        cv2.waitKey(500)
+
+cv2.destroyAllWindows()
+
+# Perform camera calibration to find the camera matrix, distortion coefficients, etc.
+ret, camera_matrix, dist_coeffs, rvecs, tvecs = cv2.calibrateCamera(objpoints, imgpoints, gray.shape[::-1], None, None)
+
+# Save the calibration results for later use
+np.save('camera_matrix.npy', camera_matrix)
+np.save('dist_coeffs.npy', dist_coeffs)
+
+# Print results
+print("Camera matrix:")
+print(camera_matrix)
+
+print("Distortion coefficients:")
+print(dist_coeffs)
+
+# Now let's undistort an image
+img = cv2.imread('calibration_images/example_image.jpg')  # Load one of the images for testing
+h, w = img.shape[:2]
+new_camera_matrix, roi = cv2.getOptimalNewCameraMatrix(camera_matrix, dist_coeffs, (w, h), 1, (w, h))
+
+# Undistort the image
+dst = cv2.undistort(img, camera_matrix, dist_coeffs, None, new_camera_matrix)
+
+# Crop the image to the valid ROI
+x, y, w, h = roi
+dst = dst[y:y+h, x:x+w]
+
+# Show the original and undistorted image
+cv2.imshow('Original Image', img)
+cv2.imshow('Undistorted Image', dst)
+cv2.waitKey(0)
+cv2.destroyAllWindows()
+```
+
+---
+
+### **Explanation of the Code**
+
+1. **Checkerboard Setup**:
+   - You define the **size of the checkerboard** you are using. For example, if you printed a 9x6 checkerboard (9 inner corners in the horizontal direction, 6 inner corners in the vertical direction), you set:
+     ```python
+     CHECKERBOARD = (9, 6)
+     ```
+
+2. **Object Points Setup**:
+   - The object points represent the real-world coordinates of the checkerboard corners. We assume the checkerboard lies flat on the **Z = 0 plane**.
+   - **`objp`** is a 3D array where the first two coordinates are (x, y), and the third coordinate is 0.
+
+3. **Image Points and Object Points**:
+   - For each image, OpenCV’s `cv2.findChessboardCorners()` detects the corners of the checkerboard.
+   - **`objpoints`**: Real-world 3D coordinates of the corners.
+   - **`imgpoints`**: 2D coordinates of the corners in the image.
+
+4. **Camera Calibration**:
+   - The function **`cv2.calibrateCamera()`** computes the **camera matrix**, **distortion coefficients**, and **rotation/translation vectors**.
+   - The **camera matrix** describes the camera's intrinsic parameters (focal length, optical center, etc.).
+   - The **distortion coefficients** are used to correct the image for lens distortion.
+
+5. **Undistorting an Image**:
+   - Once the camera is calibrated, you can use **`cv2.undistort()`** to remove the distortion from images captured by your camera.
+
+6. **Saving Calibration Data**:
+   - The resulting **camera matrix** and **distortion coefficients** are saved as `.npy` files (`camera_matrix.npy` and `dist_coeffs.npy`). You can later use these files in your main project for correcting camera distortions and estimating the pose of objects, such as ArUco markers.
+
+---
+
+### **What You Need to Do**
+
+1. **Print a Checkerboard**:
+   - Print a checkerboard pattern, ensuring it is large enough to be detected from different distances.
+
+2. **Capture Calibration Images**:
+   - Take around 15-20 images of the checkerboard at various angles and distances. Ensure the entire checkerboard is visible in each image.
+   - Save these images in a folder, e.g., `calibration_images/`.
+
+3. **Run the Calibration Script**:
+   - Save the script provided above as `calibrate_camera.py`.
+   - Modify the path to your checkerboard images if needed (e.g., `calibration_images/*.jpg`).
+   - Run the script:
+
+     ```bash
+     python3 calibrate_camera.py
+     ```
+
+4. **Verify the Results**:
+   - The calibration results (camera matrix and distortion coefficients) will be printed in the console and saved in `camera_matrix.npy` and `dist_coeffs.npy`.
+
+5. **Use the Calibration Files**:
+   - These `.npy` files will be used in your main project (e.g., autonomous landing with ArUco markers) to correct for lens distortion and improve accuracy.
+
+---
+
+### **Tips for Better Calibration**
+
+- **Vary the Angle**: Capture the checkerboard from different angles and distances.
+- **Good Lighting**: Ensure that the images are well-lit so that the corners of the checkerboard are easy to detect.
+- **Avoid Blurry Images**: Ensure that the calibration images are sharp and focused.
+
+---
+
+By following this guide, you’ll have calibrated your camera, allowing for more accurate computer vision processing in your drone's autonomous landing system. Let me know if you have any questions or need further clarification!
